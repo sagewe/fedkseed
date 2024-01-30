@@ -1,0 +1,27 @@
+# common file patterns
+.DS_STORE
+.idea
+.vscode/*
+*.iml
+*.pyc
+__pycache__
+venv
+*.tar.gz
+*.db
+*.db-journal
+*.mdb
+*.jar
+.env
+Cargo.lock
+
+
+# logs
+**/logs/*
+
+# editable install
+PKG-INFO
+entry_points.txt
+dependency_links.txt
+requires.txt
+SOURCES.txt
+top_level.txt

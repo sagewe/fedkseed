@@ -1,0 +1,23 @@
+[tool.black]
+line-length = 119
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+(
+  .*_pb2.py |
+  .*_pb2_grpc.py
+)
+'''
+
+[tool.pyright]
+include = ["."]
+exclude = ["**/node_modules",
+    "**/__pycache__",
+    "src/typestubs"
+]
+defineConstant = { DEBUG = true }
+reportMissingImports = true
+reportMissingTypeStubs = false
+executionEnvironments = [
+  { root = "." },
+]
