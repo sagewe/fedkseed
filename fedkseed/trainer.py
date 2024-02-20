@@ -1,5 +1,4 @@
 import logging
-from dataclasses import dataclass, field
 from typing import Dict, Union, Any, Tuple
 from typing import Optional, List, Callable
 
@@ -9,8 +8,8 @@ from torch.utils.data import Dataset
 from transformers import PreTrainedModel, PreTrainedTokenizerBase, EvalPrediction, DataCollator
 from transformers import Trainer, TrainingArguments
 from transformers.trainer_callback import TrainerCallback
-from transformers.utils import add_start_docstrings
 
+from fedkseed.args import KSeedTrainingArguments
 from fedkseed.optimizer import KSeedZerothOrderOptimizer
 
 logger = logging.getLogger(__name__)
@@ -45,29 +44,27 @@ class KSeedZOExtendedTrainer(Trainer):
             preprocess_logits_for_metrics=preprocess_logits_for_metrics,
         )
         self.args = args
-        self._candidate_seed_probabilities = None
-        self.kseed_optimizer = None
+        self._kseed_optimizer = None
 
-    @property
-    def candidate_seed_probabilities(self):
-        if self._candidate_seed_probabilities is None:
-            raise ValueError("candidate_seed_probabilities is not set.")
-        return self._candidate_seed_probabilities
+        self._seed_candidates = None
+        self._seed_probabilities = None
 
-    def set_candidate_seed_probabilities(self, candidate_seed_probabilities):
-        self._candidate_seed_probabilities = candidate_seed_probabilities
+    def configure_seed_candidates(self, seed_candidates: torch.LongTensor, seed_probabilities: torch.FloatTensor):
+        self._seed_candidates = seed_candidates
+        self._seed_probabilities = seed_probabilities
 
     @staticmethod
-    def backport_mode(args):
-        if hasattr(args, "enable_kseed_optim") and args.enable_kseed_optim:
-            return False
-        return True
+    def k_seed_zo_mode(args):
+        return hasattr(args, "zo_optim") and args.zo_optim
 
     def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
         """
         hook to do the step with KSeedZerothOrderOptimizer
         """
-        if not KSeedZOExtendedTrainer.backport_mode(self.args):
+        if KSeedZOExtendedTrainer.k_seed_zo_mode(self.args):
+            if self._kseed_optimizer is None:
+                raise ValueError("KSeedZerothOrderOptimizer is not configured")
+
             model.eval()
             inputs = self._prepare_inputs(inputs)
 
@@ -80,7 +77,7 @@ class KSeedZOExtendedTrainer(Trainer):
                 # we don't use step() method of KSeedZerothOrderOptimizer here
                 # because `Trainer` wraps the optimizer that is subclass of `torch.optim.Optimizer` and
                 # returns nothing from the step method
-                loss = self.kseed_optimizer.kseed_zeroth_order_step(closure=closure)
+                loss = self._kseed_optimizer.kseed_zeroth_order_step(closure=closure)
             return loss.detach()
         else:
             return super().training_step(model, inputs)
@@ -89,50 +86,34 @@ class KSeedZOExtendedTrainer(Trainer):
         """
         hook to add KSeedZerothOrderOptimizer
         """
-        if not KSeedZOExtendedTrainer.backport_mode(self.args):
-            # some of the code is copied from Trainer.create_optimizer_and_scheduler
-            opt_model = self.model
-            decay_parameters = self.get_decay_parameter_names(self.model)
-            optimizer_grouped_parameters = [
-                {
-                    "params": [
-                        p for n, p in opt_model.named_parameters() if (n in decay_parameters and p.requires_grad)
-                    ],
-                    "weight_decay": self.args.weight_decay,
-                },
-                {
-                    "params": [
-                        p for n, p in opt_model.named_parameters() if (n not in decay_parameters and p.requires_grad)
-                    ],
-                    "weight_decay": 0.0,
-                },
-            ]
+        if KSeedZOExtendedTrainer.k_seed_zo_mode(self.args):
+            from fedkseed.pytorch_utils import get_optimizer_parameters_grouped_with_decay
+            from transformers.optimization import get_scheduler, SchedulerType
+
+            if self._seed_candidates is None or self._seed_probabilities is None:
+                raise ValueError("Seed candidates and probabilities are not configured.")
+
+            optimizer_grouped_parameters = get_optimizer_parameters_grouped_with_decay(
+                self.model, self.args.weight_decay
+            )
             self.optimizer = KSeedZerothOrderOptimizer(
                 optimizer_grouped_parameters,
-                candidate_seed_probabilities=self.candidate_seed_probabilities,
+                seed_candidates=self._seed_candidates,
+                seed_probabilities=self._seed_probabilities,
                 lr=self.args.learning_rate,
                 eps=self.args.eps,
                 weight_decay=self.args.weight_decay,
                 grad_clip=self.args.grad_clip,
             )
-            # we need to keep the reference to the optimizer before wrapped by `Trainer`
-            self.kseed_optimizer = self.optimizer
-            # FIXME: lr_scheduler here may lead to a bug, because it's not used in KSeedZerothOrderOptimizer
-            self.create_scheduler(num_training_steps=num_training_steps, optimizer=self.optimizer)
+            # we need to keep the reference to the original optimizer to use it in training_step
+            self._kseed_optimizer = self.optimizer
+            # if we use learning rate scheduler, we may need to preserve all updates instead of the aggregated one
+            # FIXME: is there any privacy issue if we send all update history to the client?
+            self.lr_scheduler = get_scheduler(
+                name=SchedulerType.CONSTANT,
+                optimizer=self.optimizer,
+                num_warmup_steps=self.args.warmup_steps,
+                num_training_steps=num_training_steps,
+            )
         else:
             super().create_optimizer_and_scheduler(num_training_steps)
-
-
-@dataclass
-@add_start_docstrings(TrainingArguments.__doc__)
-class KSeedTrainingArguments(TrainingArguments):
-    """
-    Args:
-        enable_kseed_optim (`bool`, *optional*, defaults to `False`):
-    """
-
-    enable_kseed_optim: bool = field(
-        default=False, metadata={"help": "Whether to use KSeedZerothOrderOptimizer or not."}
-    )
-    eps: float = field(default=0.0005, metadata={"help": "Epsilon value for KSeedZerothOrderOptimizer."})
-    grad_clip: float = field(default=-100.0, metadata={"help": "Gradient clip value for KSeedZerothOrderOptimizer."})

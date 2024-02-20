@@ -16,5 +16,5 @@ python3 scripts/cli.py --output_dir tmp_trainer
 use the following command to run the training script with k-seed optimization:
 
 ```bash
-python3 scripts/cli.py --output_dir tmp_trainer --enable_kseed_optim=True
+python3 scripts/cli.py --output_dir tmp_trainer --zo_optim=False
 ```

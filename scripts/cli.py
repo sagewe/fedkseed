@@ -53,20 +53,19 @@ def load_data():
     return data, eval_data, collate_fn
 
 
-def main():
-    from transformers import HfArgumentParser
-    from fedkseed.kseed import KSeedServer
-    from fedkseed.trainer import KSeedZOExtendedTrainer, KSeedTrainingArguments
-
-    (train_args,) = HfArgumentParser((KSeedTrainingArguments,)).parse_args_into_dataclasses()
+def main(train_args):
 
     data, eval_data, collate_fn = load_data()
     model = load_model()
+
+    from fedkseed.fedkseed import KSeedServer
+    from fedkseed.trainer import KSeedZOExtendedTrainer
+
     trainer = KSeedZOExtendedTrainer(
         model=model, args=train_args, data_collator=collate_fn, train_dataset=data, eval_dataset=eval_data
     )
 
-    if not trainer.backport_mode(train_args):
+    if trainer.k_seed_zo_mode(train_args):
         init_grad_projected_value = 0.0
         k_seed_server = KSeedServer.build(
             k=4096,
@@ -75,12 +74,18 @@ def main():
             weight_decay=train_args.weight_decay,
             grad_clip=train_args.grad_clip,
         )
-        candidate_seed_probabilities = k_seed_server.get_candidate_seeds_with_probabilities()
-        trainer.set_candidate_seed_probabilities(candidate_seed_probabilities)
+        seeds_candidates = k_seed_server.get_seed_candidates()
+        seed_probabilities = k_seed_server.get_seed_probabilities()
+        trainer.configure_seed_candidates(seeds_candidates, seed_probabilities)
 
     trainer.train()
     trainer.evaluate()
 
 
 if __name__ == "__main__":
-    main()
+    from transformers import HfArgumentParser
+    from fedkseed.args import KSeedTrainingArguments
+
+    (kseed_train_args,) = HfArgumentParser((KSeedTrainingArguments,)).parse_args_into_dataclasses()
+
+    main(kseed_train_args)

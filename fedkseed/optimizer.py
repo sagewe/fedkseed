@@ -1,8 +1,10 @@
 import math
-from typing import Mapping, Optional, Callable, Tuple
+from typing import Mapping, Optional, Callable, Tuple, List
 
 import torch
 from torch.optim import Optimizer
+
+from fedkseed.pytorch_utils import get_optimizer_parameters_grouped_with_decay
 
 
 class RandomWalkOptimizer(Optimizer):
@@ -25,19 +27,7 @@ class RandomWalkOptimizer(Optimizer):
 
     @classmethod
     def from_model(cls, model, lr, weight_decay, grad_clip, **kwargs):
-        # order matters here
-        params_no_decay = list()
-        params_decay = list()
-        for name, param in model.named_parameters():
-            if "bias" not in name and "layer_norm" not in name and "layernorm" not in name:
-                params_decay.append(param)
-            else:
-                params_no_decay.append(param)
-
-        optimizer_grouped_parameters = [
-            {"params": params_no_decay, "weight_decay": None},
-            {"params": params_decay, "weight_decay": weight_decay},
-        ]
+        optimizer_grouped_parameters = get_optimizer_parameters_grouped_with_decay(model, weight_decay)
         kwargs["lr"] = lr
         kwargs["weight_decay"] = weight_decay
         kwargs["grad_clip"] = grad_clip
@@ -152,18 +142,20 @@ class ZerothOrderOptimizer(RandomWalkOptimizer):
 
 
 class KSeedZerothOrderOptimizer(ZerothOrderOptimizer):
-    def __init__(self, params, candidate_seed_probabilities: Mapping[int, float], lr, eps, weight_decay, grad_clip):
-        self.candidate_seeds = list(candidate_seed_probabilities.keys())
-        self.probabilities = [candidate_seed_probabilities[seed] for seed in self.candidate_seeds]
-        self.directional_derivative_history = {seed: [] for seed in self.candidate_seeds}
+    def __init__(self, params, seed_candidates: torch.LongTensor, seed_probabilities: torch.FloatTensor, lr, eps, weight_decay, grad_clip):
+        self.seed_candidate = seed_candidates
+        self.seed_probabilities = seed_probabilities
+        self.directional_derivative_history: Mapping[int, List[float]] = {seed.item(): [] for seed in seed_candidates}
         self.sample_random_generator = torch.Generator()
         super(KSeedZerothOrderOptimizer, self).__init__(params, lr, eps, weight_decay, grad_clip)
 
     def sample(self) -> int:
-        sampled: int = torch.multinomial(torch.Tensor(self.probabilities), 1, generator=self.sample_random_generator)[
-            0
-        ].item()
-        return self.candidate_seeds[sampled]
+        sampled = torch.multinomial(
+            input=self.seed_probabilities,
+            num_samples=1,
+            generator=self.sample_random_generator,
+        )[0].item()
+        return self.seed_candidate[sampled].item()
 
     def step(self, closure: Callable[[], torch.FloatTensor] = None) -> torch.FloatTensor:
         if closure is None:
