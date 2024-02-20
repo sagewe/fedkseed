@@ -23,5 +23,9 @@ class KSeedTrainingArguments(TrainingArguments):
         default=True,
         metadata={"help": "Whether to use KSeedZerothOrderOptimizer. This suppress `optim` argument when True."},
     )
+    k: int = field(
+        default=4096,
+        metadata={"help": "The number of seed candidates to use. This suppress `seed_candidates` argument when > 1."},
+    )
     eps: float = field(default=0.0005, metadata={"help": "Epsilon value for KSeedZerothOrderOptimizer."})
     grad_clip: float = field(default=-100.0, metadata={"help": "Gradient clip value for KSeedZerothOrderOptimizer."})

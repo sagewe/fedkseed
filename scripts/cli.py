@@ -58,7 +58,7 @@ def main(train_args):
     data, eval_data, collate_fn = load_data()
     model = load_model()
 
-    from fedkseed.fedkseed import KSeedServer
+    from fedkseed.zo_utils import build_seed_candidates, get_even_seed_probabilities
     from fedkseed.trainer import KSeedZOExtendedTrainer
 
     trainer = KSeedZOExtendedTrainer(
@@ -66,20 +66,15 @@ def main(train_args):
     )
 
     if trainer.k_seed_zo_mode(train_args):
-        init_grad_projected_value = 0.0
-        k_seed_server = KSeedServer(
-            k=4096,
-            init_grad_projected_value=init_grad_projected_value,
-            lr=train_args.learning_rate,
-            weight_decay=train_args.weight_decay,
-            grad_clip=train_args.grad_clip,
-        )
-        seeds_candidates = k_seed_server.get_seed_candidates()
-        seed_probabilities = k_seed_server.get_seed_probabilities()
+        seeds_candidates = build_seed_candidates(train_args.k, low=0, high=2**32)
+        seed_probabilities = get_even_seed_probabilities(train_args.k)
         trainer.configure_seed_candidates(seeds_candidates, seed_probabilities)
 
     trainer.train()
     trainer.evaluate()
+
+    if trainer.k_seed_zo_mode(train_args):
+        print(trainer.get_directional_derivative_history())
 
 
 if __name__ == "__main__":

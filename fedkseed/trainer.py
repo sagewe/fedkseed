@@ -53,6 +53,17 @@ class KSeedZOExtendedTrainer(Trainer):
         self._seed_candidates = seed_candidates
         self._seed_probabilities = seed_probabilities
 
+    def get_directional_derivative_history(self):
+        """
+        hook to get the directional derivative history
+        """
+        if KSeedZOExtendedTrainer.k_seed_zo_mode(self.args):
+            if self._kseed_optimizer is None:
+                raise ValueError("KSeedZerothOrderOptimizer is not configured")
+            return self._kseed_optimizer.directional_derivative_history
+        else:
+            raise ValueError("KSeedZerothOrderOptimizer is not configured")
+
     @staticmethod
     def k_seed_zo_mode(args):
         return hasattr(args, "zo_optim") and args.zo_optim

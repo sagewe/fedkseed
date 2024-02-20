@@ -66,3 +66,17 @@ def directional_derivative_step(
                 param.data = param.data - lr * (directional_derivative_value * z)
 
     return directional_derivative_value
+
+
+def build_seed_candidates(k, low=0, high=2**32):
+    """
+    Build seed candidates for the random walk optimizer
+    """
+    return torch.randint(low, high, size=(k,), dtype=torch.long)
+
+
+def get_even_seed_probabilities(k):
+    """
+    Get the even seed probabilities, i.e., 1/k for each seed
+    """
+    return torch.ones(k) / k
