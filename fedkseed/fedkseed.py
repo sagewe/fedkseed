@@ -1,18 +1,26 @@
 from typing import List, Mapping
 
 import torch
+from fedkseed.zo_utils import probability_from_amps, directional_derivative_step
+from fedkseed.pytorch_utils import get_optimizer_parameters_grouped_with_decay
 
 
 class KSeedServer:
     def __init__(
         self,
-        candidate_seeds: torch.LongTensor,
-        lr,
-        weight_decay,
-        grad_clip,
+        candidate_seeds: torch.LongTensor = None,
+        lr=1e-4,
+        k=4096,
+        low=1,
+        high=100000000000,
         bias_loss_clip=0.5,
         init_grad_projected_value=0.0,
+        weight_decay=0.0,
+        grad_clip=0.0,
     ):
+        if candidate_seeds is None:
+            candidate_seeds = torch.randint(low, high, (k,))
+
         self.candidate_seeds = candidate_seeds
         self.bias_loss_clip = bias_loss_clip
         self.lr = lr
@@ -21,27 +29,6 @@ class KSeedServer:
         self.grad_projected_value_history = {seed: [init_grad_projected_value] for seed in self.candidate_seeds}
         self.grad_projected_value_agg = {seed: 0.0 for seed in self.candidate_seeds}
         self.has_history = False
-
-    @classmethod
-    def build(
-        cls,
-        k,
-        low=1,
-        high=100000000000,
-        bias_loss_clip=0.5,
-        init_grad_projected_value=0.0,
-        learning_rate=0.1,
-        weight_decay=0.0,
-        grad_clip=0.0,
-    ):
-        return KSeedServer(
-            torch.randint(low, high, (k,)),
-            learning_rate,
-            weight_decay,
-            grad_clip,
-            bias_loss_clip,
-            init_grad_projected_value,
-        )
 
     def get_seed_candidates(self) -> torch.LongTensor:
         return self.candidate_seeds
@@ -69,29 +56,9 @@ class KSeedServer:
         Warning: when learning rate scheduler is used in client side, this method will not work properly.
         FIXME: Maybe we should control the learning rate in the server side.
         """
-        from fedkseed.optimizer import RandomWalkOptimizer
-
         if self.has_history:
-            optimizer = RandomWalkOptimizer.from_model(
-                model, lr=self.lr, weight_decay=self.weight_decay, grad_clip=self.grad_clip
-            )
+            param_groups = get_optimizer_parameters_grouped_with_decay(model, self.weight_decay)
             for seed, grad in self.grad_projected_value_agg.items():
                 if grad != 0.0:
-                    optimizer.directional_derivative_step(seed, grad)
+                    directional_derivative_step(param_groups, seed, grad, lr=self.lr, weight_decay=self.weight_decay)
         return model
-
-
-def probability_from_amps(amps: List[List[float]], clip):
-    """
-    Get the probability distribution from the amplitude history
-
-    formula: amp_i = clamp(amp_i, -clip, clip).abs().mean()
-             amp_i = (amp_i - min(amp)) / (max(amp) - min(amp))
-             prob_i = softmax(amp)_i
-
-    :param amps: list of amplitude history
-    :param clip: the clipping value
-    :return:
-    """
-    amp = torch.stack([torch.Tensor(amp).clamp_(-clip, clip).abs_().mean() for amp in amps])
-    return (amp - amp.min()).div_(amp.max() - amp.min() + 1e-10).softmax(0)

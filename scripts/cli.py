@@ -67,10 +67,10 @@ def main(train_args):
 
     if trainer.k_seed_zo_mode(train_args):
         init_grad_projected_value = 0.0
-        k_seed_server = KSeedServer.build(
+        k_seed_server = KSeedServer(
             k=4096,
             init_grad_projected_value=init_grad_projected_value,
-            learning_rate=train_args.learning_rate,
+            lr=train_args.learning_rate,
             weight_decay=train_args.weight_decay,
             grad_clip=train_args.grad_clip,
         )

@@ -5,6 +5,7 @@ import torch
 from torch.optim import Optimizer
 
 from fedkseed.pytorch_utils import get_optimizer_parameters_grouped_with_decay
+from fedkseed.zo_utils import directional_derivative_step
 
 
 class RandomWalkOptimizer(Optimizer):
@@ -39,27 +40,12 @@ class RandomWalkOptimizer(Optimizer):
         """
         perform a step update for the parameters of the model
         along the random direction z with the learning rate lr and the step size grad_projected_value
-
-        Input:
-        - closure (callable, optional): A closure that reevaluates the model and returns the loss.
         """
 
         if self.grad_clip > 0.0:
             if abs(directional_derivative_value) > self.grad_clip:
                 return torch.FloatTensor([torch.nan])
-
-        torch.manual_seed(directional_derivative_seed)
-        for param_group in self.param_groups:
-            weight_decay = param_group["weight_decay"]
-            for param in param_group["params"]:
-                z = torch.normal(
-                    mean=0, std=1, size=param.data.size(), device=param.data.device, dtype=param.data.dtype
-                )
-                if weight_decay is not None:
-                    param.data = param.data - self.lr * (directional_derivative_value * z + weight_decay * param.data)
-                else:
-                    param.data = param.data - self.lr * (directional_derivative_value * z)
-
+        directional_derivative_step(self.param_groups, directional_derivative_seed, directional_derivative_value)
         return directional_derivative_value
 
     def step(self, closure: Optional[Callable[[], float]] = None) -> Optional[float]:
@@ -142,7 +128,16 @@ class ZerothOrderOptimizer(RandomWalkOptimizer):
 
 
 class KSeedZerothOrderOptimizer(ZerothOrderOptimizer):
-    def __init__(self, params, seed_candidates: torch.LongTensor, seed_probabilities: torch.FloatTensor, lr, eps, weight_decay, grad_clip):
+    def __init__(
+        self,
+        params,
+        seed_candidates: torch.LongTensor,
+        seed_probabilities: torch.FloatTensor,
+        lr,
+        eps,
+        weight_decay,
+        grad_clip,
+    ):
         self.seed_candidate = seed_candidates
         self.seed_probabilities = seed_probabilities
         self.directional_derivative_history: Mapping[int, List[float]] = {seed.item(): [] for seed in seed_candidates}
