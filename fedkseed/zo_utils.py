@@ -15,7 +15,8 @@ def probability_from_amps(amps: List[List[float]], clip):
     :param clip: the clipping value
     :return:
     """
-    amp = torch.stack([torch.Tensor(amp).clamp_(-clip, clip).abs_().mean() for amp in amps])
+    amps = [torch.Tensor(amp) for amp in amps]
+    amp = torch.stack([amp.clamp_(-clip, clip).abs_().mean() for amp in amps])
     return (amp - amp.min()).div_(amp.max() - amp.min() + 1e-10).softmax(0)
 
 
@@ -61,7 +62,12 @@ def directional_derivative_step(
         for param in param_group["params"]:
             z = torch.normal(mean=0, std=1, size=param.data.size(), device=param.data.device, dtype=param.data.dtype)
             if weight_decay is not None:
-                param.data = param.data - lr * (directional_derivative_value * z + weight_decay * param.data)
+                try:
+                    param.data = param.data - lr * (directional_derivative_value * z + weight_decay * param.data)
+                except Exception as e:
+                    print("param.data", param.data, lr, directional_derivative_value, z, weight_decay)
+                    raise e
+
             else:
                 param.data = param.data - lr * (directional_derivative_value * z)
 
