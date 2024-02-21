@@ -1,75 +1,44 @@
-def load_model():
+def load_model(model_args):
     import torch
-    import torch.nn as nn
-    import torch.nn.functional as F
+    from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    class Net(nn.Module):
-        def __init__(self):
-            super(Net, self).__init__()
-            self.conv1 = nn.Conv2d(1, 32, 3, 1)
-            self.conv2 = nn.Conv2d(32, 64, 3, 1)
-            self.dropout1 = nn.Dropout(0.25)
-            self.dropout2 = nn.Dropout(0.5)
-            self.fc1 = nn.Linear(9216, 128)
-            self.fc2 = nn.Linear(128, 10)
-
-        def forward(self, x, labels=None):
-            x = self.conv1(x)
-            x = F.relu(x)
-            x = self.conv2(x)
-            x = F.relu(x)
-            x = F.max_pool2d(x, 2)
-            x = self.dropout1(x)
-            x = torch.flatten(x, 1)
-            x = self.fc1(x)
-            x = F.relu(x)
-            x = self.dropout2(x)
-            x = self.fc2(x)
-            output = F.log_softmax(x, dim=1)
-
-            if labels is not None:
-                loss = F.nll_loss(output, labels)
-                return {"loss": loss, "logits": output}
-            return {"logits": output}
-
-    return Net()
-
-
-def load_data():
-    import torch
-    import torchvision
-
-    transform = torchvision.transforms.Compose(
-        [torchvision.transforms.ToTensor(), torchvision.transforms.Normalize((0.1307,), (0.3081,))]
+    return AutoModelForCausalLM.from_pretrained(
+        model_args.model_name_or_path, device_map="cpu", torch_dtype=torch.float16, trust_remote_code=True
     )
-    data = torchvision.datasets.MNIST(root="data", download=True, transform=transform, train=True)
-    eval_data = torchvision.datasets.MNIST(root="data", train=False, download=True, transform=transform)
-
-    def collate_fn(examples):
-        pixel_values = torch.stack([example[0] for example in examples])
-        labels = torch.tensor([example[1] for example in examples])
-        return {"x": pixel_values, "labels": labels}
-
-    return data, eval_data, collate_fn
 
 
-def run_client(ctx, train_args):
+def load_data(dataset_args):
+    from datasets import load_dataset
+    from transformers.data.data_collator import DataCollatorWithPadding
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(dataset_args.tokenizer_name_or_path)
+
+    return (
+        tokenizer,
+        load_dataset(dataset_args.dataset_name)["train"],
+        None,
+        DataCollatorWithPadding(tokenizer=tokenizer),
+    )
+
+
+def run_client(ctx, train_args, model_args, dataset_args):
     from fedkseed.fedkseed import ClientTrainer
 
-    data, eval_data, collate_fn = load_data()
+    tokenizer, data, eval_data, collate_fn = load_data(dataset_args)
 
-    model = load_model()
-    trainer = ClientTrainer(ctx, model, train_args, data, eval_data, collate_fn)
+    model = load_model(model_args)
+    trainer = ClientTrainer(ctx, model, train_args, data, eval_data, collate_fn, tokenizer)
     trainer.serve_loop()
 
 
-def run_server(ctx, train_args):
+def run_server(ctx, train_args, model_args, dataset_args):
     from fedkseed.fedkseed import Trainer
     from fedkseed.zo_utils import build_seed_candidates
 
-    data, eval_data, collate_fn = load_data()
+    tokenizer, data, eval_data, collate_fn = load_data(dataset_args)
     seeds_candidates = build_seed_candidates(train_args.k, low=0, high=2**32)
-    model = load_model()
+    model = load_model(model_args)
 
     trainer = Trainer(ctx, seeds_candidates, model, train_args, data, eval_data, collate_fn)
     trainer.train()
@@ -79,18 +48,40 @@ def main():
     import logging
     from rich.logging import RichHandler
 
-    logging.basicConfig(level="NOTSET", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()])
+    logging.basicConfig(level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()])
 
-    from fedkseed.fedkseed import ClientTrainer, FedKSeedTrainingArguments
+    from fedkseed.fedkseed import FedKSeedTrainingArguments
     from dataclasses import dataclass, field
 
     @dataclass
     class FedKSeedTrainingRunnerArguments(FedKSeedTrainingArguments):
         role: str = field(default="arbiter")
 
+    @dataclass
+    class ModelArguments:
+        model_name_or_path: str = field(
+            default="datajuicer/LLaMA-1B-dj-refine-150B",
+            metadata={
+                "help": "The model checkpoint for weights initialization. Leave None if you want to train a model from scratch."
+            },
+        )
+
+    @dataclass
+    class DatasetArguments:
+        dataset_name: str = field(
+            default="databricks/databricks-dolly-15k",
+            metadata={"help": "The name of the dataset to use."},
+        )
+        tokenizer_name_or_path: str = field(
+            default="datajuicer/LLaMA-1B-dj-refine-150B",
+            metadata={"help": "The name of the tokenizer to use."},
+        )
+
     from transformers import HfArgumentParser
 
-    (fedkseed_train_args,) = HfArgumentParser((FedKSeedTrainingRunnerArguments,)).parse_args_into_dataclasses()
+    (fedkseed_train_args, fedkseed_model_args, fedkseed_dataset_args) = HfArgumentParser(
+        (FedKSeedTrainingRunnerArguments, ModelArguments, DatasetArguments)
+    ).parse_args_into_dataclasses()
 
     from fate.arch import Context
     from fate.arch.computing import ComputingBuilder
@@ -106,13 +97,13 @@ def main():
             federation_session_id=federation_session_id, party=("arbiter", "10000"), parties=parties
         ).build_standalone(computing_session=computing_session)
         ctx = Context(federation=federation, computing=computing_session)
-        run_server(ctx, fedkseed_train_args)
+        run_server(ctx, fedkseed_train_args, model_args=fedkseed_model_args, dataset_args=fedkseed_dataset_args)
     else:
         federation = FederationBuilder(
             federation_session_id=federation_session_id, party=("host", "10000"), parties=parties
         ).build_standalone(computing_session=computing_session)
         ctx = Context(federation=federation, computing=computing_session)
-        run_client(ctx, fedkseed_train_args)
+        run_client(ctx, fedkseed_train_args, model_args=fedkseed_model_args, dataset_args=fedkseed_dataset_args)
 
 
 if __name__ == "__main__":

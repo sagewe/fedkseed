@@ -20,22 +20,6 @@ def probability_from_amps(amps: List[List[float]], clip):
     return (amp - amp.min()).div_(amp.max() - amp.min() + 1e-10).softmax(0)
 
 
-def optimization_reply(model, lr, weight_decay, grad_clip, grad_projected_value_agg):
-    """
-    Update the model with the aggregated directional derivative values
-
-    Warning: when learning rate scheduler is used in client side, this method will not work properly.
-    FIXME: Maybe we should control the learning rate in the server side.
-    """
-    from fedkseed.optimizer import RandomWalkOptimizer
-
-    optimizer = RandomWalkOptimizer.from_model(model, lr=lr, weight_decay=weight_decay, grad_clip=grad_clip)
-    for seed, grad in grad_projected_value_agg.items():
-        if grad != 0.0:
-            optimizer.directional_derivative_step(seed, grad)
-    return model
-
-
 def directional_derivative_step(
     param_groups: List[dict],
     directional_derivative_seed: int,
@@ -62,11 +46,7 @@ def directional_derivative_step(
         for param in param_group["params"]:
             z = torch.normal(mean=0, std=1, size=param.data.size(), device=param.data.device, dtype=param.data.dtype)
             if weight_decay is not None:
-                try:
-                    param.data = param.data - lr * (directional_derivative_value * z + weight_decay * param.data)
-                except Exception as e:
-                    print("param.data", param.data, lr, directional_derivative_value, z, weight_decay)
-                    raise e
+                param.data = param.data - lr * (directional_derivative_value * z + weight_decay * param.data)
 
             else:
                 param.data = param.data - lr * (directional_derivative_value * z)

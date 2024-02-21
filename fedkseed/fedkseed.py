@@ -86,12 +86,13 @@ class Trainer:
 
 
 class ClientTrainer:
-    def __init__(self, ctx: Context, model, args, train_dataset, eval_dataset, data_collator):
+    def __init__(self, ctx: Context, model, args, train_dataset, eval_dataset, data_collator, tokenizer):
         self.ctx = ctx
         self.args = args
         self.data_collator = data_collator
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
+        self.tokenizer = tokenizer
 
         self.weight_decay = args.weight_decay
         self.model_0 = model
@@ -99,7 +100,7 @@ class ClientTrainer:
     def serve_loop(self):
         for i, sub_ctx in self.ctx.ctxs_range(self.args.num_aggregations):
             # step1: wait for the server to send the seed candidates and probabilities or exit signal
-            logger.info("waiting for server")
+            logger.info(f"training loop started: {i}")
             should_exit, kwargs = sub_ctx.arbiter.get("train_once")
             seed_candidates = kwargs["seed_candidates"]
             seed_probabilities = kwargs["seed_probabilities"]
@@ -116,13 +117,12 @@ class ClientTrainer:
             )
 
             # step3: send the directional derivative history to the server
-            logger.info("sending to server")
             sub_ctx.arbiter.put("direction_derivative_history", direction_derivative_history)
-            logger.info("done sending")
 
     def train_once(self, seed_candidates, seed_probabilities, direction_derivative_sum) -> Mapping[int, List[float]]:
         # build model
         model = copy.deepcopy(self.model_0)
+        model.to(self.args.device)
         if direction_derivative_sum is not None:
             param_groups = get_optimizer_parameters_grouped_with_decay(model, self.weight_decay)
             for seed, grad in direction_derivative_sum.items():
@@ -130,16 +130,19 @@ class ClientTrainer:
                     directional_derivative_step(
                         param_groups, seed, grad, lr=self.args.learning_rate, weight_decay=self.args.weight_decay
                     )
+
         # train
         trainer = KSeedZOExtendedTrainer(
             model=model,
             args=self.args,
+            tokenizer=self.tokenizer,
             data_collator=self.data_collator,
             train_dataset=self.train_dataset,
             eval_dataset=self.eval_dataset,
         )
         trainer.configure_seed_candidates(seed_candidates, seed_probabilities)
         trainer.train()
+        logger.info(f"evaluate: {trainer.evaluate()}")
         # get directional derivative history
         return trainer.get_directional_derivative_history()
 

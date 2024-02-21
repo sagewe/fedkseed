@@ -119,7 +119,6 @@ class KSeedZOExtendedTrainer(Trainer):
             # we need to keep the reference to the original optimizer to use it in training_step
             self._kseed_optimizer = self.optimizer
             # if we use learning rate scheduler, we may need to preserve all updates instead of the aggregated one
-            # FIXME: is there any privacy issue if we send all update history to the client?
             self.lr_scheduler = get_scheduler(
                 name=SchedulerType.CONSTANT,
                 optimizer=self.optimizer,

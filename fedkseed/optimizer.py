@@ -99,7 +99,9 @@ class ZerothOrderOptimizer(RandomWalkOptimizer):
         # ∇f(x) · z = D_z f(x) ≈ (f(x + eps * z) - f(x - eps * z)) / (2 * eps)
         directional_derivative_value = (loss_right - loss_left) / (2 * self.eps)
         # perform update for the random direction z * grad_projected_value
-        self.directional_derivative_step(directional_derivative_seed, directional_derivative_value)
+        directional_derivative_value = self.directional_derivative_step(
+            directional_derivative_seed, directional_derivative_value
+        )
 
         return directional_derivative_value, loss_right, loss_left
 
