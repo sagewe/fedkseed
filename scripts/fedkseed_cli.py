@@ -7,16 +7,98 @@ def load_model(model_args):
     )
 
 
+INTRO_BLURB = (
+    "Below is an instruction that describes a task. Write a response that appropriately completes the request."
+)
+INSTRUCTION_KEY = "### Instruction:"
+INPUT_KEY = "Input:"
+RESPONSE_KEY = "### Response:"
+END_KEY = "### End"
+RESPONSE_KEY_NL = f"{RESPONSE_KEY}\n"
+DEFAULT_SEED = 42
+PROMPT_NO_INPUT_FORMAT = """{intro}
+
+{instruction_key}
+{instruction}
+
+{response_key}
+{response}
+
+{end_key}""".format(
+    intro=INTRO_BLURB,
+    instruction_key=INSTRUCTION_KEY,
+    instruction="{instruction}",
+    response_key=RESPONSE_KEY,
+    response="{response}",
+    end_key=END_KEY,
+)
+
+# This is a training prompt that contains an input string that serves as context for the instruction.  For example,
+# the input might be a passage from Wikipedia and the intruction is to extract some information from it.
+PROMPT_WITH_INPUT_FORMAT = """{intro}
+
+{instruction_key}
+{instruction}
+
+{input_key}
+{input}
+
+{response_key}
+{response}
+
+{end_key}""".format(
+    intro=INTRO_BLURB,
+    instruction_key=INSTRUCTION_KEY,
+    instruction="{instruction}",
+    input_key=INPUT_KEY,
+    input="{input}",
+    response_key=RESPONSE_KEY,
+    response="{response}",
+    end_key=END_KEY,
+)
+
+
 def load_data(dataset_args):
     from datasets import load_dataset
     from transformers.data.data_collator import DataCollatorWithPadding
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(dataset_args.tokenizer_name_or_path)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+
+    def tokenize_function(examples):
+        return tokenizer(examples["text"])
+
+    def _add_text(rec):
+        instruction = rec["instruction"]
+        response = rec["response"]
+        context = rec.get("context")
+
+        if not instruction:
+            raise ValueError(f"Expected an instruction in: {rec}")
+
+        if not response:
+            raise ValueError(f"Expected a response in: {rec}")
+
+        # For some instructions there is an input that goes along with the instruction, providing context for the
+        # instruction.  For example, the input might be a passage from Wikipedia and the instruction says to extract
+        # some piece of information from it.  The response is that information to extract.  In other cases there is
+        # no input.  For example, the instruction might be open QA such as asking what year some historic figure was
+        # born.
+        if context:
+            rec["text"] = PROMPT_WITH_INPUT_FORMAT.format(instruction=instruction, response=response, input=context)
+        else:
+            rec["text"] = PROMPT_NO_INPUT_FORMAT.format(instruction=instruction, response=response)
+        return rec
+
+    dataset = load_dataset(dataset_args.dataset_name, split="train")
+    dataset = dataset.map(_add_text)
+    dataset = dataset.map(tokenize_function, batched=True)
 
     return (
         tokenizer,
-        load_dataset(dataset_args.dataset_name)["train"],
+        dataset,
         None,
         DataCollatorWithPadding(tokenizer=tokenizer),
     )
