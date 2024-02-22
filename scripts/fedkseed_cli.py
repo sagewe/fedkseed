@@ -3,7 +3,7 @@ def load_model(model_args):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     return AutoModelForCausalLM.from_pretrained(
-        model_args.model_name_or_path, device_map="cpu", torch_dtype=torch.float16, trust_remote_code=True
+        model_args.model_name_or_path, device_map="cpu", trust_remote_code=True
     )
 
 
@@ -60,7 +60,7 @@ PROMPT_WITH_INPUT_FORMAT = """{intro}
 
 def load_data(dataset_args):
     from datasets import load_dataset
-    from transformers.data.data_collator import DataCollatorWithPadding
+    from transformers.data.data_collator import DataCollatorForLanguageModeling
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(dataset_args.tokenizer_name_or_path)
@@ -92,15 +92,15 @@ def load_data(dataset_args):
             rec["text"] = PROMPT_NO_INPUT_FORMAT.format(instruction=instruction, response=response)
         return rec
 
-    dataset = load_dataset(dataset_args.dataset_name, split="train")
+    dataset = load_dataset(dataset_args.dataset_name, split="train").train_test_split(test_size=0.1)
     dataset = dataset.map(_add_text)
     dataset = dataset.map(tokenize_function, batched=True)
 
     return (
         tokenizer,
-        dataset,
-        None,
-        DataCollatorWithPadding(tokenizer=tokenizer),
+        dataset['train'],
+        dataset['test'],
+        DataCollatorForLanguageModeling(tokenizer=tokenizer),
     )
 
 
@@ -120,9 +120,10 @@ def run_server(ctx, train_args, model_args, dataset_args):
 
     tokenizer, data, eval_data, collate_fn = load_data(dataset_args)
     seeds_candidates = build_seed_candidates(train_args.k, low=0, high=2**32)
-    model = load_model(model_args)
+    #model = load_model(model_args)
+    #print(model)
 
-    trainer = Trainer(ctx, seeds_candidates, model, train_args, data, eval_data, collate_fn)
+    trainer = Trainer(ctx, seeds_candidates, None, train_args, data, eval_data, collate_fn)
     trainer.train()
 
 
@@ -130,7 +131,7 @@ def main():
     import logging
     from rich.logging import RichHandler
 
-    logging.basicConfig(level="INFO", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()])
+    logging.basicConfig(level="DEBUG", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()])
 
     from fedkseed.fedkseed import FedKSeedTrainingArguments
     from dataclasses import dataclass, field

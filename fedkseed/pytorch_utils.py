@@ -31,9 +31,7 @@ def get_decay_parameter_names(model) -> List[str]:
     return decay_parameters
 
 
-def get_optimizer_parameters_grouped_with_decay(
-        model, weight_decay: float
-) -> List[dict]:
+def get_optimizer_parameters_grouped_with_decay(model, weight_decay: float) -> List[dict]:
     """
     Get the parameters grouped by whether they should have weight decay applied
     """

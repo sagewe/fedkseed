@@ -83,13 +83,15 @@ class KSeedZOExtendedTrainer(Trainer):
                 # zeroth order optimization needs forward pass twice in an optimization step,
                 # so we need to wrap the forward pass in a closure
                 def closure() -> torch.FloatTensor:
-                    return self.compute_loss(model, inputs, return_outputs=False)
+                    with torch.no_grad():
+                        return self.compute_loss(model, inputs, return_outputs=False).detach()
 
-                # we don't use step() method of KSeedZerothOrderOptimizer here
-                # because `Trainer` wraps the optimizer that is subclass of `torch.optim.Optimizer` and
-                # returns nothing from the step method
+            # we don't use step() method of KSeedZerothOrderOptimizer here
+            # because `Trainer` wraps the optimizer that is subclass of `torch.optim.Optimizer` and
+            # returns nothing from the step method
+            with torch.no_grad():
                 loss = self._kseed_optimizer.kseed_zeroth_order_step(closure=closure)
-            return loss.detach()
+                return loss.detach()
         else:
             return super().training_step(model, inputs)
 
